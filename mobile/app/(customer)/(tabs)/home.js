@@ -26,7 +26,7 @@ import { Button } from '../../../components/common/Button';
 import { COLORS } from '../../../utils/constants';
 
 export default function CustomerHomeScreen() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const router = useRouter();
   
   const [deliveries, setDeliveries] = useState([]);
@@ -42,7 +42,7 @@ export default function CustomerHomeScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
-  const [searchType, setSearchType] = useState('dropoff'); // 'pickup' or 'dropoff'
+  const [searchType, setSearchType] = useState('dropoff');
   
   // Delivery form states
   const [pickupLocation, setPickupLocation] = useState(null);
@@ -52,6 +52,9 @@ export default function CustomerHomeScreen() {
   const [recipientName, setRecipientName] = useState('');
   const [recipientPhone, setRecipientPhone] = useState('');
   const [instructions, setInstructions] = useState('');
+  const [selectedDeliveryPersonId, setSelectedDeliveryPersonId] = useState(null);
+  const [availableDeliveryPersons, setAvailableDeliveryPersons] = useState([]);
+  const [fetchingDeliveryPersons, setFetchingDeliveryPersons] = useState(false);
 
   useEffect(() => {
     fetchDeliveries();
@@ -61,10 +64,18 @@ export default function CustomerHomeScreen() {
   const fetchDeliveries = async () => {
     try {
       const response = await deliveryService.getMyDeliveries();
-      const recent = (response.data || []).slice(0, 5);
-      setDeliveries(recent);
+      if (response.success) {
+        setDeliveries(response.data || []);
+      } else {
+        Alert.alert('Error', response.message || 'Failed to load deliveries');
+        if (response.message?.includes('token') || response.message?.includes('auth')) {
+          logout();
+          router.replace('/auth/login');
+        }
+      }
     } catch (error) {
       console.error('Fetch deliveries error:', error);
+      Alert.alert('Error', 'Failed to load deliveries. Please try again.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -89,7 +100,6 @@ export default function CustomerHomeScreen() {
         
         if (address?.formattedAddress) {
           setCurrentLocation(address.formattedAddress);
-          // Set initial pickup location to current location
           setPickupLocation({
             latitude: location.latitude,
             longitude: location.longitude,
@@ -104,7 +114,6 @@ export default function CustomerHomeScreen() {
             address: readableAddress,
           });
         } else {
-          // Fallback to coordinates
           setCurrentLocation(`${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`);
           setPickupLocation({
             latitude: location.latitude,
@@ -124,6 +133,28 @@ export default function CustomerHomeScreen() {
     } catch (error) {
       console.error('Get location error:', error);
       setCurrentLocation('Location unavailable');
+      Alert.alert('Location Error', 'Please enable location services to create deliveries.');
+    }
+  };
+
+  const fetchNearbyDeliveryPersons = async (lat, lng) => {
+    if (!lat || !lng) return;
+    
+    setFetchingDeliveryPersons(true);
+    try {
+      const response = await deliveryService.getNearbyRiders(lat, lng);
+      if (response.success) {
+        setAvailableDeliveryPersons(response.data || []);
+        if (response.data.length > 0) {
+          setSelectedDeliveryPersonId(response.data[0]._id);
+        }
+      } else {
+        console.log('No delivery persons available or error:', response.message);
+      }
+    } catch (error) {
+      console.error('Fetch nearby delivery persons error:', error);
+    } finally {
+      setFetchingDeliveryPersons(false);
     }
   };
 
@@ -185,13 +216,13 @@ export default function CustomerHomeScreen() {
           setPickupLocation(location);
         } else {
           setDropoffLocation(location);
+          // Fetch nearby delivery persons when dropoff is selected
+          await fetchNearbyDeliveryPersons(location.latitude, location.longitude);
         }
 
         setShowSearchModal(false);
         setSearchQuery('');
         setSearchResults([]);
-        
-        // Don't show alert, just update the UI
       } else {
         throw new Error('Could not get location details');
       }
@@ -202,6 +233,7 @@ export default function CustomerHomeScreen() {
   };
 
   const handleCreateDelivery = async () => {
+    // Validation
     if (!pickupLocation || !dropoffLocation) {
       Alert.alert('Error', 'Please select both pickup and dropoff locations');
       return;
@@ -214,7 +246,8 @@ export default function CustomerHomeScreen() {
 
     // Validate phone number
     const phoneRegex = /^[0-9]{10,15}$/;
-    if (!phoneRegex.test(recipientPhone.replace(/\D/g, ''))) {
+    const cleanedPhone = recipientPhone.replace(/\D/g, '');
+    if (!phoneRegex.test(cleanedPhone)) {
       Alert.alert('Error', 'Please enter a valid phone number (10-15 digits)');
       return;
     }
@@ -222,27 +255,31 @@ export default function CustomerHomeScreen() {
     setCreating(true);
     try {
       const deliveryData = {
-        pickupAddress: pickupLocation.address,
-        pickupLat: pickupLocation.latitude.toString(),
-        pickupLng: pickupLocation.longitude.toString(),
-        dropoffAddress: dropoffLocation.address,
-        dropoffLat: dropoffLocation.latitude.toString(),
-        dropoffLng: dropoffLocation.longitude.toString(),
+        pickup: {
+          address: pickupLocation.address,
+          lat: pickupLocation.latitude.toString(),
+          lng: pickupLocation.longitude.toString(),
+        },
+        dropoff: {
+          address: dropoffLocation.address,
+          lat: dropoffLocation.latitude.toString(),
+          lng: dropoffLocation.longitude.toString(),
+        },
         itemType: itemType,
         itemDescription: itemDescription || 'Package delivery',
         itemWeight: 1,
         itemValue: 0,
-        customerName: user?.fullName || 'Customer',
+        customerName: user?.fullName || user?.name || 'Customer',
         customerPhone: user?.phone || '',
         recipientName: recipientName.trim(),
-        recipientPhone: recipientPhone.trim().replace(/\D/g, ''),
+        recipientPhone: cleanedPhone,
         estimatedDistance: 5000,
         estimatedDuration: 600,
         deliveryInstructions: instructions,
+        ...(selectedDeliveryPersonId && { deliveryPersonId: selectedDeliveryPersonId }),
       };
 
       console.log('Creating delivery with data:', deliveryData);
-
       const response = await deliveryService.createDelivery(deliveryData);
       
       if (response.success) {
@@ -261,6 +298,7 @@ export default function CustomerHomeScreen() {
             },
             {
               text: 'OK',
+              style: 'default',
               onPress: () => {
                 setShowCreateModal(false);
                 resetForm();
@@ -281,7 +319,6 @@ export default function CustomerHomeScreen() {
   };
 
   const resetForm = () => {
-    // Keep pickup location as current location
     if (currentCoordinates) {
       setPickupLocation({
         latitude: currentCoordinates.latitude,
@@ -298,6 +335,8 @@ export default function CustomerHomeScreen() {
     setInstructions('');
     setSearchQuery('');
     setSearchResults([]);
+    setSelectedDeliveryPersonId(null);
+    setAvailableDeliveryPersons([]);
   };
 
   const onRefresh = () => {
@@ -399,13 +438,6 @@ export default function CustomerHomeScreen() {
                 <Text style={styles.instructionsText}>
                   Enter an address, landmark, or place name to search
                 </Text>
-                <View style={styles.exampleContainer}>
-                  <Text style={styles.exampleTitle}>Examples:</Text>
-                  <Text style={styles.exampleItem}>• Port Harcourt Airport</Text>
-                  <Text style={styles.exampleItem}>• City Center Mall</Text>
-                  <Text style={styles.exampleItem}>• University of Port Harcourt</Text>
-                  <Text style={styles.exampleItem}>• GRA Phase 2</Text>
-                </View>
               </View>
             )}
           </ScrollView>
@@ -510,13 +542,74 @@ export default function CustomerHomeScreen() {
             </TouchableOpacity>
           </View>
 
+          {/* Available Delivery Persons Section */}
+          {fetchingDeliveryPersons ? (
+            <View style={styles.modalSection}>
+              <Text style={styles.sectionTitle}>Finding Available Delivery Persons</Text>
+              <View style={styles.loadingDeliveryPersonsContainer}>
+                <ActivityIndicator size="large" color={COLORS.primary} />
+                <Text style={styles.loadingDeliveryPersonsText}>Searching for nearby delivery persons...</Text>
+              </View>
+            </View>
+          ) : availableDeliveryPersons.length > 0 ? (
+            <View style={styles.modalSection}>
+              <Text style={styles.sectionTitle}>Available Delivery Persons</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                {availableDeliveryPersons.map((person) => (
+                  <TouchableOpacity
+                    key={person._id}
+                    style={[
+                      styles.deliveryPersonCard,
+                      selectedDeliveryPersonId === person._id && styles.deliveryPersonCardSelected
+                    ]}
+                    onPress={() => setSelectedDeliveryPersonId(person._id)}
+                  >
+                    {person.userId?.avatarUrl ? (
+                      <Image source={{ uri: person.userId.avatarUrl }} style={styles.deliveryPersonAvatar} />
+                    ) : (
+                      <View style={styles.deliveryPersonAvatar}>
+                        <Text style={styles.deliveryPersonAvatarText}>
+                          {person.userId?.name?.charAt(0).toUpperCase() || 'D'}
+                        </Text>
+                      </View>
+                    )}
+                    <Text style={styles.deliveryPersonName} numberOfLines={1}>
+                      {person.userId?.name?.split(' ')[0] || 'Delivery Person'}
+                    </Text>
+                    <Text style={styles.deliveryPersonDistance}>
+                      {person.distance?.toFixed(1) || 'N/A'} km
+                    </Text>
+                    <Text style={styles.deliveryPersonVehicle}>
+                      {person.vehicleType || 'Bike'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              <Text style={styles.deliveryPersonNote}>
+                {selectedDeliveryPersonId 
+                  ? 'Selected delivery person will be assigned to this delivery' 
+                  : 'Tap to select a delivery person (optional)'}
+              </Text>
+            </View>
+          ) : dropoffLocation && !fetchingDeliveryPersons ? (
+            <View style={styles.modalSection}>
+              <Text style={styles.sectionTitle}>Available Delivery Persons</Text>
+              <View style={styles.noDeliveryPersonsContainer}>
+                <Text style={styles.noDeliveryPersonsText}>No delivery persons available in this area</Text>
+                <Text style={styles.noDeliveryPersonsSubtext}>
+                  Delivery will be created and assigned when a delivery person becomes available
+                </Text>
+              </View>
+            </View>
+          ) : null}
+
           {/* Customer Details */}
           <View style={styles.modalSection}>
             <Text style={styles.sectionTitle}>Your Details</Text>
             
             <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Name:</Text>
-              <Text style={styles.detailValue}>{user?.fullName || 'Not set'}</Text>
+              <Text style={styles.detailValue}>{user?.fullName || user?.name || 'Not set'}</Text>
             </View>
             
             <View style={styles.detailRow}>
@@ -526,7 +619,7 @@ export default function CustomerHomeScreen() {
             
             <View style={styles.noteContainer}>
               <Text style={styles.noteText}>
-                Note: Your details will be shared with the rider for contact purposes.
+                Note: Your details will be shared with the delivery person for contact purposes.
               </Text>
             </View>
           </View>
@@ -612,7 +705,7 @@ export default function CustomerHomeScreen() {
               style={[styles.textInput, styles.multilineInput]}
               value={instructions}
               onChangeText={setInstructions}
-              placeholder="Any special instructions for the rider..."
+              placeholder="Any special instructions for the delivery person..."
               placeholderTextColor={COLORS.gray}
               multiline
               numberOfLines={3}
@@ -647,6 +740,14 @@ export default function CustomerHomeScreen() {
                   {itemType.charAt(0).toUpperCase() + itemType.slice(1)}
                 </Text>
               </View>
+              {selectedDeliveryPersonId && (
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Delivery Person:</Text>
+                  <Text style={styles.summaryValue}>
+                    {availableDeliveryPersons.find(p => p._id === selectedDeliveryPersonId)?.userId?.name || 'Selected'}
+                  </Text>
+                </View>
+              )}
             </View>
           </View>
         </ScrollView>
@@ -675,7 +776,6 @@ export default function CustomerHomeScreen() {
     <View style={styles.container}>
       {/* Header with Profile and Location */}
       <View style={styles.header}>
-        {/* Profile Section */}
         <TouchableOpacity 
           style={styles.profileSection}
           onPress={() => router.push('/profile')}
@@ -697,21 +797,20 @@ export default function CustomerHomeScreen() {
           </View>
         </TouchableOpacity>
 
-        {/* Location Section */}
         <TouchableOpacity 
           style={styles.locationSection}
           onPress={getCurrentLocation}
         >
           <Text style={styles.locationIcon}>📍</Text>
           <View style={styles.locationTextContainer}>
-         <Text style={styles.locationText} numberOfLines={2}>
+            <Text style={styles.locationText} numberOfLines={2}>
               {currentLocation}
             </Text>
           </View>
         </TouchableOpacity>
       </View>
 
-      {/* Search Bar */}
+      {/* Create Delivery Button */}
       <TouchableOpacity
         style={styles.searchBar}
         onPress={() => setShowCreateModal(true)}
@@ -744,10 +843,10 @@ export default function CustomerHomeScreen() {
               Tap the "Create new delivery" button above to get started
             </Text>
             <TouchableOpacity 
-              style={styles.createButton}
+              style={styles.createFirstButton}
               onPress={() => setShowCreateModal(true)}
             >
-              <Text style={styles.createButtonText}>Create First Delivery</Text>
+              <Text style={styles.createFirstButtonText}>Create First Delivery</Text>
             </TouchableOpacity>
           </View>
         ) : (
@@ -769,10 +868,7 @@ export default function CustomerHomeScreen() {
         )}
       </View>
 
-      {/* Create Delivery Modal */}
       {renderCreateModal()}
-      
-      {/* Location Search Modal */}
       {renderSearchModal()}
     </View>
   );
@@ -839,10 +935,6 @@ const styles = StyleSheet.create({
   },
   locationTextContainer: {
     flex: 1,
-  },
-  locationLabel: {
-    fontSize: 10,
-    color: COLORS.gray,
   },
   locationText: {
     fontSize: 12,
@@ -933,14 +1025,13 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginBottom: 20,
   },
-  createButton: {
+  createFirstButton: {
     backgroundColor: COLORS.primary,
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 12,
-    marginTop: 10,
   },
-  createButtonText: {
+  createFirstButtonText: {
     color: COLORS.white,
     fontSize: 14,
     fontWeight: '600',
@@ -1052,6 +1143,85 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+  
+  // Delivery Person styles
+  loadingDeliveryPersonsContainer: {
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  loadingDeliveryPersonsText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: COLORS.gray,
+  },
+  noDeliveryPersonsContainer: {
+    backgroundColor: COLORS.light,
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  noDeliveryPersonsText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.dark,
+    marginBottom: 4,
+  },
+  noDeliveryPersonsSubtext: {
+    fontSize: 12,
+    color: COLORS.gray,
+    textAlign: 'center',
+  },
+  deliveryPersonCard: {
+    backgroundColor: COLORS.light,
+    padding: 12,
+    borderRadius: 12,
+    marginRight: 12,
+    alignItems: 'center',
+    minWidth: 100,
+  },
+  deliveryPersonCardSelected: {
+    backgroundColor: COLORS.primaryLight,
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+  },
+  deliveryPersonAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  deliveryPersonAvatarText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: COLORS.white,
+  },
+  deliveryPersonName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.dark,
+    marginBottom: 4,
+  },
+  deliveryPersonDistance: {
+    fontSize: 10,
+    color: COLORS.gray,
+    marginBottom: 2,
+  },
+  deliveryPersonVehicle: {
+    fontSize: 10,
+    color: COLORS.primary,
+    fontWeight: '600',
+  },
+  deliveryPersonNote: {
+    fontSize: 12,
+    color: COLORS.gray,
+    marginTop: 8,
+    fontStyle: 'italic',
+    textAlign: 'center',
+  },
+
   detailRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1143,7 +1313,7 @@ const styles = StyleSheet.create({
   summaryLabel: {
     fontSize: 14,
     color: COLORS.gray,
-    width: 80,
+    width: 100,
     fontWeight: '500',
   },
   summaryValue: {
@@ -1156,6 +1326,9 @@ const styles = StyleSheet.create({
     padding: 20,
     borderTopWidth: 1,
     borderTopColor: COLORS.light,
+  },
+  createButton: {
+    width: '100%',
   },
   disclaimerText: {
     fontSize: 10,
@@ -1273,23 +1446,18 @@ const styles = StyleSheet.create({
     color: COLORS.gray,
     textAlign: 'center',
   },
-  exampleContainer: {
-    marginTop: 20,
-    backgroundColor: COLORS.light,
-    padding: 16,
-    borderRadius: 12,
-    width: '100%',
+  instructionsContainer: {
+    padding: 20,
   },
-  exampleTitle: {
-    fontSize: 14,
+  instructionsTitle: {
+    fontSize: 16,
     fontWeight: '600',
     color: COLORS.dark,
     marginBottom: 8,
   },
-  exampleItem: {
+  instructionsText: {
     fontSize: 14,
     color: COLORS.gray,
-    marginBottom: 4,
-    marginLeft: 8,
+    marginBottom: 16,
   },
 });

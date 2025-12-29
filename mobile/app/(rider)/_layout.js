@@ -1,30 +1,20 @@
-
-// app/(rider)/_layout.js
+// app/(customer)/_layout.js - MINIMAL VERSION
 import React from 'react';
 import { Stack } from 'expo-router';
-import { Tabs } from 'expo-router';
 import { COLORS } from '../../utils/constants';
+import { AuthProvider } from '../../context/AuthContext';
 
-export default function RiderLayout() {
+export default function CustomerLayout() {
   return (
-    <Stack
+   <AuthProvider>
+     <Stack
       screenOptions={{
         headerShown: false,
+        contentStyle: { backgroundColor: COLORS.background },
       }}
     >
       <Stack.Screen name="(tabs)" />
-      <Stack.Screen 
-        name="delivery-details" 
-        options={{
-          headerShown: true,
-          headerTitle: 'Delivery Details',
-          headerStyle: {
-            backgroundColor: COLORS.white,
-          },
-          headerTintColor: COLORS.primary,
-        }}
-      />
     </Stack>
+   </AuthProvider>
   );
 }
- 

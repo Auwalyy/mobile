@@ -75,7 +75,7 @@ const handleLogin = async () => {
     // Navigate based on user role
     if (userData.role === 'customer') {
       router.replace('/(customer)/home');
-    } else if (userData.role === 'rider') {
+    } else if (userData.role === 'driver') {
       router.replace('/(rider)/home');
     } else {
       Alert.alert('Error', 'Invalid user role');
