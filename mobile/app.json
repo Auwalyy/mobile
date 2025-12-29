@@ -1,48 +1,66 @@
 {
   "expo": {
-    "name": "mobile",
-    "slug": "mobile",
+    "name": "Riderr",
+    "slug": "riderr",
+    "scheme": "riderr",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "mobile",
-    "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/images/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": ["**/*"],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.yourcompany.riderr",
+      "config": {
+        "googleMapsApiKey": "AIzaSyDJBcxx-l7Rooy5_ti3CbtI3ANs4I0_WZs"
+      },
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "This app needs access to your location to show nearby riders and track deliveries.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "This app needs access to your location to track deliveries in the background.",
+        "UIBackgroundModes": ["location", "fetch"]
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "foregroundImage": "./assets/images/favicon.png",
+        "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
-    },
-    "web": {
-      "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "package": "com.yourcompany.riderr",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION"
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyDJBcxx-l7Rooy5_ti3CbtI3ANs4I0_WZs"
+        }
+      }
     },
     "plugins": [
       "expo-router",
       [
-        "expo-splash-screen",
+        "expo-location",
         {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
-          "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
-          "dark": {
-            "backgroundColor": "#000000"
-          }
+          "locationAlwaysAndWhenInUsePermission": "Allow $(PRODUCT_NAME) to use your location for delivery tracking."
+        }
+      ],
+      [
+        "react-native-maps",
+        {
+          "iosApiKey": "AIzaSyDJBcxx-l7Rooy5_ti3CbtI3ANs4I0_WZs",
+          "androidApiKey": "AIzaSyDJBcxx-l7Rooy5_ti3CbtI3ANs4I0_WZs"
         }
       ]
     ],
     "experiments": {
       "typedRoutes": true,
-      "reactCompiler": true
+      "tsconfigPaths": true
     }
   }
 }
