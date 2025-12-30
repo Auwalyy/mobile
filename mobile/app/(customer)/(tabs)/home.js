@@ -1,4 +1,4 @@
-// app/(customer)/(tabs)/home.js
+// app/(customer)/(tabs)/home.js - Complete with Modal
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -24,10 +24,19 @@ import { OrderCard } from '../../../components/OrderCard';
 import { Loading } from '../../../components/common/Loading';
 import { Button } from '../../../components/common/Button';
 import { COLORS } from '../../../utils/constants';
+import { useDeliverySocket } from '../../../hooks/useDeliverySocket';
 
 export default function CustomerHomeScreen() {
   const { user, logout } = useAuth();
   const router = useRouter();
+  
+  // Socket.IO with safe access
+  let socketHook = null;
+  try {
+    socketHook = useDeliverySocket();
+  } catch (error) {
+    console.log('Socket hook not available:', error);
+  }
   
   const [deliveries, setDeliveries] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -52,14 +61,26 @@ export default function CustomerHomeScreen() {
   const [recipientName, setRecipientName] = useState('');
   const [recipientPhone, setRecipientPhone] = useState('');
   const [instructions, setInstructions] = useState('');
-  const [selectedDeliveryPersonId, setSelectedDeliveryPersonId] = useState(null);
-  const [availableDeliveryPersons, setAvailableDeliveryPersons] = useState([]);
-  const [fetchingDeliveryPersons, setFetchingDeliveryPersons] = useState(false);
+
+  // Socket states
+  const socketConnected = socketHook?.connected || false;
+  const searchingForRiders = socketHook?.searching || false;
+  const assignedDelivery = socketHook?.assignedDelivery || null;
+  const nearbyCount = socketHook?.nearbyCount || 0;
 
   useEffect(() => {
     fetchDeliveries();
     getCurrentLocation();
   }, []);
+
+  useEffect(() => {
+    if (assignedDelivery) {
+      setShowCreateModal(false);
+      resetForm();
+      fetchDeliveries();
+      router.push(`/order-details?id=${assignedDelivery._id}`);
+    }
+  }, [assignedDelivery]);
 
   const fetchDeliveries = async () => {
     try {
@@ -75,7 +96,7 @@ export default function CustomerHomeScreen() {
       }
     } catch (error) {
       console.error('Fetch deliveries error:', error);
-      Alert.alert('Error', 'Failed to load deliveries. Please try again.');
+      Alert.alert('Error', 'Failed to load deliveries.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -91,70 +112,37 @@ export default function CustomerHomeScreen() {
         longitude: location.longitude,
       });
       
-      // Try to get a readable address
       try {
         const address = await locationService.reverseGeocode(
           location.latitude,
           location.longitude
         );
         
-        if (address?.formattedAddress) {
-          setCurrentLocation(address.formattedAddress);
-          setPickupLocation({
-            latitude: location.latitude,
-            longitude: location.longitude,
-            address: address.formattedAddress,
-          });
-        } else if (address?.street && address?.city) {
-          const readableAddress = `${address.street}, ${address.city}, ${address.region || ''}`.trim();
-          setCurrentLocation(readableAddress);
-          setPickupLocation({
-            latitude: location.latitude,
-            longitude: location.longitude,
-            address: readableAddress,
-          });
-        } else {
-          setCurrentLocation(`${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`);
-          setPickupLocation({
-            latitude: location.latitude,
-            longitude: location.longitude,
-            address: `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`,
-          });
-        }
-      } catch (geocodeError) {
-        console.error('Geocode error:', geocodeError);
-        setCurrentLocation(`${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`);
+        const formattedAddress = address?.formattedAddress || 
+          `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`;
+        
+        setCurrentLocation(formattedAddress);
         setPickupLocation({
           latitude: location.latitude,
           longitude: location.longitude,
-          address: `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`,
+          address: formattedAddress,
+          name: 'My Location'
+        });
+      } catch (geocodeError) {
+        console.error('Geocode error:', geocodeError);
+        const coords = `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`;
+        setCurrentLocation(coords);
+        setPickupLocation({
+          latitude: location.latitude,
+          longitude: location.longitude,
+          address: coords,
+          name: 'My Location'
         });
       }
     } catch (error) {
       console.error('Get location error:', error);
       setCurrentLocation('Location unavailable');
-      Alert.alert('Location Error', 'Please enable location services to create deliveries.');
-    }
-  };
-
-  const fetchNearbyDeliveryPersons = async (lat, lng) => {
-    if (!lat || !lng) return;
-    
-    setFetchingDeliveryPersons(true);
-    try {
-      const response = await deliveryService.getNearbyRiders(lat, lng);
-      if (response.success) {
-        setAvailableDeliveryPersons(response.data || []);
-        if (response.data.length > 0) {
-          setSelectedDeliveryPersonId(response.data[0]._id);
-        }
-      } else {
-        console.log('No delivery persons available or error:', response.message);
-      }
-    } catch (error) {
-      console.error('Fetch nearby delivery persons error:', error);
-    } finally {
-      setFetchingDeliveryPersons(false);
+      Alert.alert('Location Error', 'Please enable location services.');
     }
   };
 
@@ -168,7 +156,6 @@ export default function CustomerHomeScreen() {
     setSearchResults([]);
     
     try {
-      // Use Google Places Autocomplete API
       const GOOGLE_API_KEY = 'AIzaSyDJBcxx-l7Rooy5_ti3CbtI3ANs4I0_WZs';
       const response = await fetch(
         `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(searchQuery)}&key=${GOOGLE_API_KEY}&components=country:ng`
@@ -184,11 +171,11 @@ export default function CustomerHomeScreen() {
         }));
         setSearchResults(results);
       } else {
-        Alert.alert('No Results', 'No locations found. Try a different search term.');
+        Alert.alert('No Results', 'No locations found.');
       }
     } catch (error) {
       console.error('Search error:', error);
-      Alert.alert('Error', 'Failed to search location. Please try again.');
+      Alert.alert('Error', 'Failed to search location.');
     } finally {
       setSearching(false);
     }
@@ -196,7 +183,6 @@ export default function CustomerHomeScreen() {
 
   const handleSelectSearchResult = async (result) => {
     try {
-      // Get place details to get coordinates and full address
       const GOOGLE_API_KEY = 'AIzaSyDJBcxx-l7Rooy5_ti3CbtI3ANs4I0_WZs';
       const detailsResponse = await fetch(
         `https://maps.googleapis.com/maps/api/place/details/json?place_id=${result.id}&key=${GOOGLE_API_KEY}`
@@ -216,55 +202,47 @@ export default function CustomerHomeScreen() {
           setPickupLocation(location);
         } else {
           setDropoffLocation(location);
-          // Fetch nearby delivery persons when dropoff is selected
-          await fetchNearbyDeliveryPersons(location.latitude, location.longitude);
         }
 
         setShowSearchModal(false);
         setSearchQuery('');
         setSearchResults([]);
-      } else {
-        throw new Error('Could not get location details');
       }
     } catch (error) {
       console.error('Select location error:', error);
-      Alert.alert('Error', 'Failed to get location details. Please try again.');
+      Alert.alert('Error', 'Failed to get location details.');
     }
   };
 
   const handleCreateDelivery = async () => {
-    // Validation
     if (!pickupLocation || !dropoffLocation) {
       Alert.alert('Error', 'Please select both pickup and dropoff locations');
       return;
     }
 
     if (!recipientName || !recipientPhone) {
-      Alert.alert('Error', 'Please enter recipient name and phone number');
+      Alert.alert('Error', 'Please enter recipient details');
       return;
     }
 
-    // Validate phone number
     const phoneRegex = /^[0-9]{10,15}$/;
     const cleanedPhone = recipientPhone.replace(/\D/g, '');
     if (!phoneRegex.test(cleanedPhone)) {
-      Alert.alert('Error', 'Please enter a valid phone number (10-15 digits)');
+      Alert.alert('Error', 'Please enter a valid phone number');
       return;
     }
 
     setCreating(true);
     try {
       const deliveryData = {
-        pickup: {
-          address: pickupLocation.address,
-          lat: pickupLocation.latitude.toString(),
-          lng: pickupLocation.longitude.toString(),
-        },
-        dropoff: {
-          address: dropoffLocation.address,
-          lat: dropoffLocation.latitude.toString(),
-          lng: dropoffLocation.longitude.toString(),
-        },
+        pickupAddress: pickupLocation.address,
+        pickupLat: pickupLocation.latitude.toString(),
+        pickupLng: pickupLocation.longitude.toString(),
+        pickupName: pickupLocation.name,
+        dropoffAddress: dropoffLocation.address,
+        dropoffLat: dropoffLocation.latitude.toString(),
+        dropoffLng: dropoffLocation.longitude.toString(),
+        dropoffName: dropoffLocation.name,
         itemType: itemType,
         itemDescription: itemDescription || 'Package delivery',
         itemWeight: 1,
@@ -276,46 +254,71 @@ export default function CustomerHomeScreen() {
         estimatedDistance: 5000,
         estimatedDuration: 600,
         deliveryInstructions: instructions,
-        ...(selectedDeliveryPersonId && { deliveryPersonId: selectedDeliveryPersonId }),
       };
 
-      console.log('Creating delivery with data:', deliveryData);
+      console.log('Creating delivery...');
       const response = await deliveryService.createDelivery(deliveryData);
       
       if (response.success) {
-        Alert.alert(
-          'Success',
-          'Delivery created successfully!',
-          [
-            {
-              text: 'View Order',
-              onPress: () => {
-                setShowCreateModal(false);
-                resetForm();
-                fetchDeliveries();
-                router.push(`/order-details?id=${response.data._id}`);
-              }
-            },
-            {
-              text: 'OK',
-              style: 'default',
-              onPress: () => {
-                setShowCreateModal(false);
-                resetForm();
-                fetchDeliveries();
-              }
-            }
-          ]
-        );
+        const delivery = response.data;
+        
+        // Try Socket.IO if available
+        if (socketHook?.createDeliveryAndSearch && socketConnected) {
+          console.log('Using Socket.IO');
+          const socketSuccess = socketHook.createDeliveryAndSearch(delivery, {
+            lat: pickupLocation.latitude,
+            lng: pickupLocation.longitude
+          });
+
+          if (socketSuccess) {
+            Alert.alert(
+              'Searching',
+              'Looking for delivery person...',
+              [{ text: 'OK' }]
+            );
+          } else {
+            // Socket failed, show regular success
+            showRegularSuccess(delivery);
+          }
+        } else {
+          // No socket, show regular success
+          showRegularSuccess(delivery);
+        }
       } else {
         throw new Error(response.message || 'Failed to create delivery');
       }
     } catch (error) {
       console.error('Create delivery error:', error);
-      Alert.alert('Error', error.message || 'Failed to create delivery. Please try again.');
-    } finally {
+      Alert.alert('Error', error.message || 'Failed to create delivery.');
       setCreating(false);
     }
+  };
+
+  const showRegularSuccess = (delivery) => {
+    Alert.alert(
+      'Success',
+      'Delivery created! We will assign a delivery person shortly.',
+      [
+        {
+          text: 'View Order',
+          onPress: () => {
+            setShowCreateModal(false);
+            resetForm();
+            fetchDeliveries();
+            router.push(`/order-details?id=${delivery._id}`);
+          }
+        },
+        {
+          text: 'OK',
+          onPress: () => {
+            setShowCreateModal(false);
+            resetForm();
+            fetchDeliveries();
+          }
+        }
+      ]
+    );
+    setCreating(false);
   };
 
   const resetForm = () => {
@@ -324,6 +327,7 @@ export default function CustomerHomeScreen() {
         latitude: currentCoordinates.latitude,
         longitude: currentCoordinates.longitude,
         address: currentLocation,
+        name: 'My Location'
       });
     }
     
@@ -335,8 +339,7 @@ export default function CustomerHomeScreen() {
     setInstructions('');
     setSearchQuery('');
     setSearchResults([]);
-    setSelectedDeliveryPersonId(null);
-    setAvailableDeliveryPersons([]);
+    setCreating(false);
   };
 
   const onRefresh = () => {
@@ -352,135 +355,87 @@ export default function CustomerHomeScreen() {
     return 'Good evening';
   };
 
-  const renderSearchModal = () => (
-    <Modal
-      visible={showSearchModal}
-      animationType="slide"
-      transparent={true}
-      onRequestClose={() => {
-        setShowSearchModal(false);
-        setSearchQuery('');
-        setSearchResults([]);
-      }}
-    >
-      <View style={styles.searchModalContainer}>
-        <View style={styles.searchModalContent}>
-          {/* Search Header */}
-          <View style={styles.searchHeader}>
-            <TouchableOpacity
-              onPress={() => {
-                setShowSearchModal(false);
-                setSearchQuery('');
-                setSearchResults([]);
-              }}
-              style={styles.searchBackButton}
-            >
-              <Text style={styles.searchBackText}>✕</Text>
-            </TouchableOpacity>
-            <Text style={styles.searchTitle}>
-              Search {searchType === 'pickup' ? 'Pickup' : 'Dropoff'} Location
-            </Text>
-            <View style={{ width: 40 }} />
-          </View>
-
-          {/* Search Input */}
-          <View style={styles.searchInputContainer}>
-            <TextInput
-              style={styles.searchInput}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              placeholder={`Enter ${searchType} location...`}
-              placeholderTextColor={COLORS.gray}
-              autoFocus
-              onSubmitEditing={handleSearchLocation}
-            />
-            <TouchableOpacity
-              style={styles.searchButton}
-              onPress={handleSearchLocation}
-              disabled={searching || !searchQuery.trim()}
-            >
-              {searching ? (
-                <ActivityIndicator size="small" color={COLORS.white} />
-              ) : (
-                <Text style={styles.searchButtonText}>Search</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-
-          {/* Search Results */}
-          <ScrollView style={styles.searchResultsContainer}>
-            {searching ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={COLORS.primary} />
-                <Text style={styles.loadingText}>Searching locations...</Text>
-              </View>
-            ) : searchResults.length > 0 ? (
-              searchResults.map((result) => (
-                <TouchableOpacity
-                  key={result.id}
-                  style={styles.searchResultItem}
-                  onPress={() => handleSelectSearchResult(result)}
-                >
-                  <Text style={styles.searchResultName}>{result.name}</Text>
-                  <Text style={styles.searchResultAddress}>{result.address}</Text>
-                </TouchableOpacity>
-              ))
-            ) : searchQuery ? (
-              <View style={styles.noResultsContainer}>
-                <Text style={styles.noResultsText}>No locations found</Text>
-                <Text style={styles.noResultsSubtext}>
-                  Try searching for places like "Airport", "Mall", or "City Center"
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.instructionsContainer}>
-                <Text style={styles.instructionsTitle}>Search for a location</Text>
-                <Text style={styles.instructionsText}>
-                  Enter an address, landmark, or place name to search
-                </Text>
-              </View>
-            )}
-          </ScrollView>
+  // Render Connection Status
+  const renderConnectionStatus = () => {
+    if (!socketHook) return null;
+    
+    if (!socketConnected && socketHook.connectionAttempted) {
+      return null; // Hide after first attempt
+    }
+    
+    if (!socketConnected) {
+      return (
+        <View style={styles.connectionStatus}>
+          <View style={styles.connectionDot} />
+          <Text style={styles.connectionText}>Connecting...</Text>
         </View>
-      </View>
-    </Modal>
-  );
+      );
+    }
+    return null;
+  };
 
+  // Render Searching Overlay
+  const renderSearchingOverlay = () => {
+    if (!searchingForRiders) return null;
+    
+    return (
+      <Modal visible={true} transparent animationType="fade">
+        <View style={styles.searchingOverlay}>
+          <View style={styles.searchingCard}>
+            <ActivityIndicator size="large" color={COLORS.primary} />
+            <Text style={styles.searchingTitle}>Searching</Text>
+            <Text style={styles.searchingText}>
+              {nearbyCount > 0 
+                ? `Found ${nearbyCount} nearby...`
+                : 'Looking for delivery persons...'}
+            </Text>
+            <TouchableOpacity
+              style={styles.cancelSearchButton}
+              onPress={() => {
+                socketHook?.cancelDeliverySearch();
+                setCreating(false);
+                setShowCreateModal(false);
+                resetForm();
+              }}
+            >
+              <Text style={styles.cancelSearchText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
+  // Render Create Delivery Modal
   const renderCreateModal = () => (
     <Modal
       visible={showCreateModal}
       animationType="slide"
-      onRequestClose={() => {
-        setShowCreateModal(false);
-        resetForm();
-      }}
+      onRequestClose={() => setShowCreateModal(false)}
     >
       <KeyboardAvoidingView
         style={styles.modalContainer}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         {/* Modal Header */}
         <View style={styles.modalHeader}>
           <TouchableOpacity
-            onPress={() => {
-              setShowCreateModal(false);
-              resetForm();
-            }}
             style={styles.modalBackButton}
+            onPress={() => setShowCreateModal(false)}
           >
-            <Text style={styles.modalBackText}>✕</Text>
+            <Text style={styles.modalBackText}>←</Text>
           </TouchableOpacity>
-          <Text style={styles.modalTitle}>Create New Delivery</Text>
+          <Text style={styles.modalTitle}>New Delivery</Text>
           <View style={{ width: 40 }} />
         </View>
 
-        <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
-          {/* Location Section */}
+        <ScrollView style={styles.modalContent}>
+          {/* Locations */}
           <View style={styles.modalSection}>
-            <Text style={styles.sectionTitle}>Delivery Locations</Text>
+            <Text style={styles.sectionTitle}>Locations</Text>
             
-            {/* Pickup Location */}
-            <TouchableOpacity 
+            {/* Pickup */}
+            <TouchableOpacity
               style={styles.locationCard}
               onPress={() => {
                 setSearchType('pickup');
@@ -489,27 +444,19 @@ export default function CustomerHomeScreen() {
             >
               <View style={[styles.locationDot, styles.pickupDot]} />
               <View style={styles.locationInfo}>
-                <Text style={styles.locationLabel}>PICKUP FROM</Text>
-                <Text style={styles.locationText} numberOfLines={3}>
-                  {pickupLocation?.address || 'Tap to select pickup location'}
+                <Text style={styles.locationLabel}>PICKUP</Text>
+                <Text style={styles.locationText} numberOfLines={2}>
+                  {pickupLocation?.address || 'Select pickup location'}
                 </Text>
               </View>
-              <TouchableOpacity 
-                style={styles.changeButton}
-                onPress={() => {
-                  setSearchType('pickup');
-                  setShowSearchModal(true);
-                }}
-              >
-                <Text style={styles.changeButtonText}>
-                  {pickupLocation ? 'Change' : 'Select'}
-                </Text>
-              </TouchableOpacity>
             </TouchableOpacity>
 
-            {/* Dropoff Location */}
-            <TouchableOpacity 
-              style={[styles.locationCard, !dropoffLocation && styles.locationCardEmpty]}
+            {/* Dropoff */}
+            <TouchableOpacity
+              style={[
+                styles.locationCard,
+                !dropoffLocation && styles.locationCardEmpty
+              ]}
               onPress={() => {
                 setSearchType('dropoff');
                 setShowSearchModal(true);
@@ -517,168 +464,44 @@ export default function CustomerHomeScreen() {
             >
               <View style={[styles.locationDot, styles.dropoffDot]} />
               <View style={styles.locationInfo}>
-                <Text style={styles.locationLabel}>DELIVER TO</Text>
-                {dropoffLocation ? (
-                  <Text style={styles.locationText} numberOfLines={3}>
-                    {dropoffLocation.address}
-                  </Text>
-                ) : (
-                  <Text style={styles.locationPlaceholder}>
-                    Tap to select dropoff location
-                  </Text>
-                )}
-              </View>
-              <TouchableOpacity 
-                style={styles.changeButton}
-                onPress={() => {
-                  setSearchType('dropoff');
-                  setShowSearchModal(true);
-                }}
-              >
-                <Text style={styles.changeButtonText}>
-                  {dropoffLocation ? 'Change' : 'Select'}
+                <Text style={styles.locationLabel}>DROPOFF</Text>
+                <Text
+                  style={
+                    dropoffLocation
+                      ? styles.locationText
+                      : styles.locationPlaceholder
+                  }
+                  numberOfLines={2}
+                >
+                  {dropoffLocation?.address || 'Select dropoff location'}
                 </Text>
-              </TouchableOpacity>
+              </View>
             </TouchableOpacity>
           </View>
 
-          {/* Available Delivery Persons Section */}
-          {fetchingDeliveryPersons ? (
-            <View style={styles.modalSection}>
-              <Text style={styles.sectionTitle}>Finding Available Delivery Persons</Text>
-              <View style={styles.loadingDeliveryPersonsContainer}>
-                <ActivityIndicator size="large" color={COLORS.primary} />
-                <Text style={styles.loadingDeliveryPersonsText}>Searching for nearby delivery persons...</Text>
-              </View>
-            </View>
-          ) : availableDeliveryPersons.length > 0 ? (
-            <View style={styles.modalSection}>
-              <Text style={styles.sectionTitle}>Available Delivery Persons</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                {availableDeliveryPersons.map((person) => (
-                  <TouchableOpacity
-                    key={person._id}
-                    style={[
-                      styles.deliveryPersonCard,
-                      selectedDeliveryPersonId === person._id && styles.deliveryPersonCardSelected
-                    ]}
-                    onPress={() => setSelectedDeliveryPersonId(person._id)}
-                  >
-                    {person.userId?.avatarUrl ? (
-                      <Image source={{ uri: person.userId.avatarUrl }} style={styles.deliveryPersonAvatar} />
-                    ) : (
-                      <View style={styles.deliveryPersonAvatar}>
-                        <Text style={styles.deliveryPersonAvatarText}>
-                          {person.userId?.name?.charAt(0).toUpperCase() || 'D'}
-                        </Text>
-                      </View>
-                    )}
-                    <Text style={styles.deliveryPersonName} numberOfLines={1}>
-                      {person.userId?.name?.split(' ')[0] || 'Delivery Person'}
-                    </Text>
-                    <Text style={styles.deliveryPersonDistance}>
-                      {person.distance?.toFixed(1) || 'N/A'} km
-                    </Text>
-                    <Text style={styles.deliveryPersonVehicle}>
-                      {person.vehicleType || 'Bike'}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-              <Text style={styles.deliveryPersonNote}>
-                {selectedDeliveryPersonId 
-                  ? 'Selected delivery person will be assigned to this delivery' 
-                  : 'Tap to select a delivery person (optional)'}
-              </Text>
-            </View>
-          ) : dropoffLocation && !fetchingDeliveryPersons ? (
-            <View style={styles.modalSection}>
-              <Text style={styles.sectionTitle}>Available Delivery Persons</Text>
-              <View style={styles.noDeliveryPersonsContainer}>
-                <Text style={styles.noDeliveryPersonsText}>No delivery persons available in this area</Text>
-                <Text style={styles.noDeliveryPersonsSubtext}>
-                  Delivery will be created and assigned when a delivery person becomes available
-                </Text>
-              </View>
-            </View>
-          ) : null}
-
-          {/* Customer Details */}
+          {/* Item Details */}
           <View style={styles.modalSection}>
-            <Text style={styles.sectionTitle}>Your Details</Text>
-            
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Name:</Text>
-              <Text style={styles.detailValue}>{user?.fullName || user?.name || 'Not set'}</Text>
-            </View>
-            
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Phone:</Text>
-              <Text style={styles.detailValue}>{user?.phone || 'Not set'}</Text>
-            </View>
-            
-            <View style={styles.noteContainer}>
-              <Text style={styles.noteText}>
-                Note: Your details will be shared with the delivery person for contact purposes.
-              </Text>
-            </View>
-          </View>
-
-          {/* Recipient Details */}
-          <View style={styles.modalSection}>
-            <Text style={styles.sectionTitle}>Recipient Details</Text>
-            
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Recipient Name *</Text>
-              <TextInput
-                style={styles.textInput}
-                value={recipientName}
-                onChangeText={setRecipientName}
-                placeholder="Enter recipient full name"
-                placeholderTextColor={COLORS.gray}
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Recipient Phone *</Text>
-              <TextInput
-                style={styles.textInput}
-                value={recipientPhone}
-                onChangeText={setRecipientPhone}
-                placeholder="Enter recipient phone number (e.g., 08012345678)"
-                placeholderTextColor={COLORS.gray}
-                keyboardType="phone-pad"
-                maxLength={15}
-              />
-              <Text style={styles.inputHint}>
-                Enter a valid Nigerian phone number (10-15 digits)
-              </Text>
-            </View>
-          </View>
-
-          {/* Package Details */}
-          <View style={styles.modalSection}>
-            <Text style={styles.sectionTitle}>Package Details</Text>
+            <Text style={styles.sectionTitle}>Item Details</Text>
             
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>Item Type</Text>
               <View style={styles.typeButtons}>
-                {['Package', 'Document', 'Food', 'Electronics', 'Other'].map((type) => (
+                {['package', 'document', 'food', 'other'].map((type) => (
                   <TouchableOpacity
                     key={type}
                     style={[
                       styles.typeButton,
-                      itemType === type.toLowerCase() && styles.typeButtonActive,
+                      itemType === type && styles.typeButtonActive
                     ]}
-                    onPress={() => setItemType(type.toLowerCase())}
+                    onPress={() => setItemType(type)}
                   >
                     <Text
                       style={[
                         styles.typeButtonText,
-                        itemType === type.toLowerCase() && styles.typeButtonTextActive,
+                        itemType === type && styles.typeButtonTextActive
                       ]}
                     >
-                      {type}
+                      {type.charAt(0).toUpperCase() + type.slice(1)}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -689,82 +512,137 @@ export default function CustomerHomeScreen() {
               <Text style={styles.inputLabel}>Description (Optional)</Text>
               <TextInput
                 style={styles.textInput}
+                placeholder="What are you sending?"
                 value={itemDescription}
                 onChangeText={setItemDescription}
-                placeholder="E.g., Small box, fragile items, etc."
                 placeholderTextColor={COLORS.gray}
-                multiline
               />
             </View>
           </View>
 
-          {/* Instructions */}
+          {/* Recipient Details */}
           <View style={styles.modalSection}>
-            <Text style={styles.sectionTitle}>Special Instructions (Optional)</Text>
-            <TextInput
-              style={[styles.textInput, styles.multilineInput]}
-              value={instructions}
-              onChangeText={setInstructions}
-              placeholder="Any special instructions for the delivery person..."
-              placeholderTextColor={COLORS.gray}
-              multiline
-              numberOfLines={3}
-            />
-          </View>
+            <Text style={styles.sectionTitle}>Recipient</Text>
+            
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Name *</Text>
+              <TextInput
+                style={styles.textInput}
+                placeholder="Recipient's name"
+                value={recipientName}
+                onChangeText={setRecipientName}
+                placeholderTextColor={COLORS.gray}
+              />
+            </View>
 
-          {/* Summary */}
-          <View style={styles.modalSection}>
-            <Text style={styles.sectionTitle}>Delivery Summary</Text>
-            <View style={styles.summaryCard}>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Pickup:</Text>
-                <Text style={styles.summaryValue} numberOfLines={2}>
-                  {pickupLocation?.address || 'Not selected'}
-                </Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Dropoff:</Text>
-                <Text style={styles.summaryValue} numberOfLines={2}>
-                  {dropoffLocation?.address || 'Not selected'}
-                </Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Recipient:</Text>
-                <Text style={styles.summaryValue}>
-                  {recipientName || 'Not entered'}
-                </Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Package:</Text>
-                <Text style={styles.summaryValue}>
-                  {itemType.charAt(0).toUpperCase() + itemType.slice(1)}
-                </Text>
-              </View>
-              {selectedDeliveryPersonId && (
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Delivery Person:</Text>
-                  <Text style={styles.summaryValue}>
-                    {availableDeliveryPersons.find(p => p._id === selectedDeliveryPersonId)?.userId?.name || 'Selected'}
-                  </Text>
-                </View>
-              )}
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Phone *</Text>
+              <TextInput
+                style={styles.textInput}
+                placeholder="Recipient's phone number"
+                value={recipientPhone}
+                onChangeText={setRecipientPhone}
+                keyboardType="phone-pad"
+                placeholderTextColor={COLORS.gray}
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Instructions (Optional)</Text>
+              <TextInput
+                style={[styles.textInput, styles.multilineInput]}
+                placeholder="Any special instructions?"
+                value={instructions}
+                onChangeText={setInstructions}
+                multiline
+                textAlignVertical="top"
+                placeholderTextColor={COLORS.gray}
+              />
             </View>
           </View>
         </ScrollView>
 
-        {/* Create Button */}
+        {/* Footer */}
         <View style={styles.modalFooter}>
           <Button
-            title={creating ? "Creating..." : "Create Delivery"}
+            title={creating ? 'Creating...' : 'Create Delivery'}
             onPress={handleCreateDelivery}
-            disabled={creating || !pickupLocation || !dropoffLocation || !recipientName || !recipientPhone}
-            style={styles.createButton}
+            disabled={creating}
+            loading={creating}
           />
-          <Text style={styles.disclaimerText}>
-            By creating this delivery, you agree to our terms and conditions.
-          </Text>
         </View>
       </KeyboardAvoidingView>
+    </Modal>
+  );
+
+  // Render Search Modal
+  const renderSearchModal = () => (
+    <Modal
+      visible={showSearchModal}
+      animationType="slide"
+      onRequestClose={() => setShowSearchModal(false)}
+    >
+      <View style={styles.modalContainer}>
+        <View style={styles.searchHeader}>
+          <TouchableOpacity
+            style={styles.searchBackButton}
+            onPress={() => setShowSearchModal(false)}
+          >
+            <Text style={styles.searchBackText}>←</Text>
+          </TouchableOpacity>
+          <Text style={styles.searchTitle}>
+            Search {searchType === 'pickup' ? 'Pickup' : 'Dropoff'}
+          </Text>
+          <View style={{ width: 40 }} />
+        </View>
+
+        <View style={styles.searchInputContainer}>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Enter location..."
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            onSubmitEditing={handleSearchLocation}
+            placeholderTextColor={COLORS.gray}
+            autoFocus
+          />
+          <TouchableOpacity
+            style={styles.searchButton}
+            onPress={handleSearchLocation}
+            disabled={searching}
+          >
+            <Text style={styles.searchButtonText}>
+              {searching ? '...' : 'Search'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView style={styles.searchResultsContainer}>
+          {searching ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator color={COLORS.primary} />
+              <Text style={styles.loadingText}>Searching...</Text>
+            </View>
+          ) : searchResults.length > 0 ? (
+            searchResults.map((result) => (
+              <TouchableOpacity
+                key={result.id}
+                style={styles.searchResultItem}
+                onPress={() => handleSelectSearchResult(result)}
+              >
+                <Text style={styles.searchResultName}>{result.name}</Text>
+                <Text style={styles.searchResultAddress} numberOfLines={2}>
+                  {result.address}
+                </Text>
+              </TouchableOpacity>
+            ))
+          ) : searchQuery ? (
+            <View style={styles.noResultsContainer}>
+              <Text style={styles.noResultsText}>No results found</Text>
+            </View>
+          ) : null}
+        </ScrollView>
+      </View>
     </Modal>
   );
 
@@ -774,7 +652,9 @@ export default function CustomerHomeScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header with Profile and Location */}
+      {renderConnectionStatus()}
+      
+      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity 
           style={styles.profileSection}
@@ -810,7 +690,7 @@ export default function CustomerHomeScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Create Delivery Button */}
+      {/* Create Button */}
       <TouchableOpacity
         style={styles.searchBar}
         onPress={() => setShowCreateModal(true)}
@@ -819,12 +699,14 @@ export default function CustomerHomeScreen() {
         <Text style={styles.searchIcon}>🚚</Text>
         <View style={styles.searchTextContainer}>
           <Text style={styles.searchMainText}>Create new delivery</Text>
-          <Text style={styles.searchSubText}>Tap to select pickup & dropoff locations</Text>
+          <Text style={styles.searchSubText}>
+            {socketConnected ? 'Real-time enabled' : 'Tap to get started'}
+          </Text>
         </View>
         <Text style={styles.arrowIcon}>→</Text>
       </TouchableOpacity>
 
-      {/* Recent Deliveries Section */}
+      {/* Recent Deliveries */}
       <View style={styles.recentSection}>
         <View style={styles.recentHeader}>
           <Text style={styles.recentTitle}>Recent Deliveries</Text>
@@ -840,14 +722,8 @@ export default function CustomerHomeScreen() {
             <Text style={styles.emptyIcon}>📦</Text>
             <Text style={styles.emptyTitle}>No deliveries yet</Text>
             <Text style={styles.emptyText}>
-              Tap the "Create new delivery" button above to get started
+              Create your first delivery above
             </Text>
-            <TouchableOpacity 
-              style={styles.createFirstButton}
-              onPress={() => setShowCreateModal(true)}
-            >
-              <Text style={styles.createFirstButtonText}>Create First Delivery</Text>
-            </TouchableOpacity>
           </View>
         ) : (
           <FlatList
@@ -868,6 +744,7 @@ export default function CustomerHomeScreen() {
         )}
       </View>
 
+      {renderSearchingOverlay()}
       {renderCreateModal()}
       {renderSearchModal()}
     </View>
@@ -878,6 +755,26 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
+  },
+  connectionStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.warning,
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    justifyContent: 'center',
+  },
+  connectionDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: COLORS.white,
+    marginRight: 8,
+  },
+  connectionText: {
+    color: COLORS.white,
+    fontSize: 11,
+    fontWeight: '600',
   },
   header: {
     backgroundColor: COLORS.white,
@@ -1022,21 +919,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.gray,
     textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 20,
   },
-  createFirstButton: {
-    backgroundColor: COLORS.primary,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 12,
-  },
-  createFirstButtonText: {
-    color: COLORS.white,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-
+  
   // Modal styles
   modalContainer: {
     flex: 1,
@@ -1081,23 +965,23 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: 'bold',
     color: COLORS.dark,
-    marginBottom: 12,
+    marginBottom: 16,
   },
   locationCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.light,
+    backgroundColor: COLORS.background,
     padding: 16,
     borderRadius: 12,
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: COLORS.light,
   },
   locationCardEmpty: {
-    backgroundColor: COLORS.white,
-    borderWidth: 2,
-    borderColor: COLORS.light,
     borderStyle: 'dashed',
+    borderColor: COLORS.gray,
   },
   locationDot: {
     width: 12,
@@ -1106,176 +990,53 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   pickupDot: {
-    backgroundColor: COLORS.success,
+    backgroundColor: COLORS.primary,
   },
   dropoffDot: {
-    backgroundColor: COLORS.danger,
+    backgroundColor: COLORS.success,
   },
   locationInfo: {
     flex: 1,
   },
   locationLabel: {
-    fontSize: 10,
+    fontSize: 11,
+    fontWeight: '600',
     color: COLORS.gray,
     marginBottom: 4,
-    textTransform: 'uppercase',
-    fontWeight: '600',
+    letterSpacing: 0.5,
   },
   locationText: {
     fontSize: 14,
     color: COLORS.dark,
-    lineHeight: 20,
+    fontWeight: '500',
   },
   locationPlaceholder: {
     fontSize: 14,
     color: COLORS.gray,
     fontStyle: 'italic',
   },
-  changeButton: {
-    marginLeft: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: COLORS.primary,
-    borderRadius: 8,
-  },
-  changeButtonText: {
-    color: COLORS.white,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  
-  // Delivery Person styles
-  loadingDeliveryPersonsContainer: {
-    alignItems: 'center',
-    paddingVertical: 20,
-  },
-  loadingDeliveryPersonsText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: COLORS.gray,
-  },
-  noDeliveryPersonsContainer: {
-    backgroundColor: COLORS.light,
-    padding: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  noDeliveryPersonsText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.dark,
-    marginBottom: 4,
-  },
-  noDeliveryPersonsSubtext: {
-    fontSize: 12,
-    color: COLORS.gray,
-    textAlign: 'center',
-  },
-  deliveryPersonCard: {
-    backgroundColor: COLORS.light,
-    padding: 12,
-    borderRadius: 12,
-    marginRight: 12,
-    alignItems: 'center',
-    minWidth: 100,
-  },
-  deliveryPersonCardSelected: {
-    backgroundColor: COLORS.primaryLight,
-    borderWidth: 2,
-    borderColor: COLORS.primary,
-  },
-  deliveryPersonAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: COLORS.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  deliveryPersonAvatarText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: COLORS.white,
-  },
-  deliveryPersonName: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: COLORS.dark,
-    marginBottom: 4,
-  },
-  deliveryPersonDistance: {
-    fontSize: 10,
-    color: COLORS.gray,
-    marginBottom: 2,
-  },
-  deliveryPersonVehicle: {
-    fontSize: 10,
-    color: COLORS.primary,
-    fontWeight: '600',
-  },
-  deliveryPersonNote: {
-    fontSize: 12,
-    color: COLORS.gray,
-    marginTop: 8,
-    fontStyle: 'italic',
-    textAlign: 'center',
-  },
-
-  detailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.light,
-  },
-  detailLabel: {
-    fontSize: 14,
-    color: COLORS.gray,
-    fontWeight: '500',
-  },
-  detailValue: {
-    fontSize: 14,
-    color: COLORS.dark,
-    fontWeight: '600',
-  },
-  noteContainer: {
-    backgroundColor: COLORS.light,
-    padding: 12,
-    borderRadius: 8,
-    marginTop: 12,
-  },
-  noteText: {
-    fontSize: 12,
-    color: COLORS.gray,
-    fontStyle: 'italic',
-    textAlign: 'center',
-  },
   inputGroup: {
     marginBottom: 16,
   },
   inputLabel: {
     fontSize: 14,
+    fontWeight: '600',
     color: COLORS.dark,
     marginBottom: 8,
-    fontWeight: '500',
-  },
-  inputHint: {
-    fontSize: 12,
-    color: COLORS.gray,
-    marginTop: 4,
-    fontStyle: 'italic',
   },
   textInput: {
-    backgroundColor: COLORS.light,
-    padding: 16,
+    backgroundColor: COLORS.background,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderRadius: 12,
-    fontSize: 14,
+    fontSize: 15,
     color: COLORS.dark,
+    borderWidth: 1,
+    borderColor: COLORS.light,
   },
   multilineInput: {
-    minHeight: 100,
-    textAlignVertical: 'top',
+    minHeight: 80,
+    paddingTop: 12,
   },
   typeButtons: {
     flexDirection: 'row',
@@ -1283,78 +1044,41 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   typeButton: {
-    backgroundColor: COLORS.light,
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 12,
-    minWidth: 80,
-    alignItems: 'center',
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: COLORS.light,
+    borderWidth: 1,
+    borderColor: COLORS.light,
   },
   typeButtonActive: {
     backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
   },
   typeButtonText: {
-    fontSize: 12,
-    color: COLORS.dark,
-    fontWeight: '500',
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.gray,
   },
   typeButtonTextActive: {
     color: COLORS.white,
   },
-  summaryCard: {
-    backgroundColor: COLORS.light,
-    padding: 16,
-    borderRadius: 12,
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    marginBottom: 8,
-  },
-  summaryLabel: {
-    fontSize: 14,
-    color: COLORS.gray,
-    width: 100,
-    fontWeight: '500',
-  },
-  summaryValue: {
-    fontSize: 14,
-    color: COLORS.dark,
-    flex: 1,
-    fontWeight: '500',
-  },
   modalFooter: {
-    padding: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     borderTopWidth: 1,
     borderTopColor: COLORS.light,
-  },
-  createButton: {
-    width: '100%',
-  },
-  disclaimerText: {
-    fontSize: 10,
-    color: COLORS.gray,
-    textAlign: 'center',
-    marginTop: 12,
-    fontStyle: 'italic',
-  },
-
-  // Search Modal Styles
-  searchModalContainer: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  searchModalContent: {
     backgroundColor: COLORS.white,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '80%',
   },
+  
+  // Search Modal styles
   searchHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
+    paddingHorizontal: 20,
+    paddingTop: 60,
+    paddingBottom: 20,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.light,
   },
@@ -1378,38 +1102,39 @@ const styles = StyleSheet.create({
   },
   searchInputContainer: {
     flexDirection: 'row',
-    padding: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     alignItems: 'center',
+    gap: 12,
   },
   searchInput: {
     flex: 1,
-    backgroundColor: COLORS.light,
-    padding: 16,
+    backgroundColor: COLORS.background,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderRadius: 12,
-    fontSize: 16,
+    fontSize: 15,
     color: COLORS.dark,
-    marginRight: 12,
+    borderWidth: 1,
+    borderColor: COLORS.light,
   },
   searchButton: {
     backgroundColor: COLORS.primary,
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingVertical: 12,
     borderRadius: 12,
-    minWidth: 80,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   searchButtonText: {
     color: COLORS.white,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
   },
   searchResultsContainer: {
-    maxHeight: 400,
+    flex: 1,
     paddingHorizontal: 20,
   },
   searchResultItem: {
-    padding: 16,
+    paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.light,
   },
@@ -1424,7 +1149,7 @@ const styles = StyleSheet.create({
     color: COLORS.gray,
   },
   loadingContainer: {
-    padding: 40,
+    paddingVertical: 40,
     alignItems: 'center',
   },
   loadingText: {
@@ -1433,31 +1158,52 @@ const styles = StyleSheet.create({
     color: COLORS.gray,
   },
   noResultsContainer: {
-    padding: 40,
+    paddingVertical: 40,
     alignItems: 'center',
   },
   noResultsText: {
     fontSize: 16,
+    color: COLORS.gray,
+  },
+  
+  // Searching Overlay styles
+  searchingOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchingCard: {
+    backgroundColor: COLORS.white,
+    borderRadius: 20,
+    padding: 32,
+    alignItems: 'center',
+    width: '80%',
+    maxWidth: 300,
+  },
+  searchingTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
     color: COLORS.dark,
+    marginTop: 16,
     marginBottom: 8,
   },
-  noResultsSubtext: {
+  searchingText: {
     fontSize: 14,
     color: COLORS.gray,
     textAlign: 'center',
+    marginBottom: 24,
   },
-  instructionsContainer: {
-    padding: 20,
+  cancelSearchButton: {
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.error,
   },
-  instructionsTitle: {
-    fontSize: 16,
+  cancelSearchText: {
+    fontSize: 15,
     fontWeight: '600',
-    color: COLORS.dark,
-    marginBottom: 8,
-  },
-  instructionsText: {
-    fontSize: 14,
-    color: COLORS.gray,
-    marginBottom: 16,
+    color: COLORS.error,
   },
 });

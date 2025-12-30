@@ -1,20 +1,13 @@
-// app/(customer)/_layout.js - MINIMAL VERSION
-import React from 'react';
 import { Stack } from 'expo-router';
-import { COLORS } from '../../utils/constants';
-import { AuthProvider } from '../../context/AuthContext';
+import { SocketProvider } from '../../context/SocketContext';
 
-export default function CustomerLayout() {
+export default function RiderLayout() {
   return (
-   <AuthProvider>
-     <Stack
-      screenOptions={{
-        headerShown: false,
-        contentStyle: { backgroundColor: COLORS.background },
-      }}
-    >
-      <Stack.Screen name="(tabs)" />
-    </Stack>
-   </AuthProvider>
+    <SocketProvider>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(tabs)" />
+         
+      </Stack>
+    </SocketProvider>
   );
 }

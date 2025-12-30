@@ -3,14 +3,14 @@ import api from './api';
 
 export const deliveryService = {
   // Get nearby delivery persons for delivery
-  getNearbyRiders: async (lat, lng, radius = 10000, vehicleType = '') => {
+  getNearbyRiders: async (params) => {
     try {
       const response = await api.get('/deliveries/nearby-riders', {
-        params: { 
-          lat: lat.toString(),
-          lng: lng.toString(),
-          radius: radius.toString(),
-          vehicleType
+        params: {
+          lat: params.lat.toString(),
+          lng: params.lng.toString(),
+          radius: params.radius || 10000,
+          vehicleType: params.vehicleType || ''
         }
       });
       return response.data;
@@ -27,22 +27,23 @@ export const deliveryService = {
   // Create a new delivery
   createDelivery: async (deliveryData) => {
     try {
-      // Format data to match backend schema
       const formattedData = {
-        pickupAddress: deliveryData.pickup?.address || deliveryData.pickupAddress,
-        pickupLat: deliveryData.pickup?.lat || deliveryData.pickupLat,
-        pickupLng: deliveryData.pickup?.lng || deliveryData.pickupLng,
-        dropoffAddress: deliveryData.dropoff?.address || deliveryData.dropoffAddress,
-        dropoffLat: deliveryData.dropoff?.lat || deliveryData.dropoffLat,
-        dropoffLng: deliveryData.dropoff?.lng || deliveryData.dropoffLng,
+        pickupAddress: deliveryData.pickupAddress,
+        pickupLat: deliveryData.pickupLat,
+        pickupLng: deliveryData.pickupLng,
+        pickupName: deliveryData.pickupName || deliveryData.pickupAddress,
+        dropoffAddress: deliveryData.dropoffAddress,
+        dropoffLat: deliveryData.dropoffLat,
+        dropoffLng: deliveryData.dropoffLng,
+        dropoffName: deliveryData.dropoffName || deliveryData.dropoffAddress,
         itemType: deliveryData.itemType || 'package',
         itemDescription: deliveryData.itemDescription || 'Package delivery',
         itemWeight: deliveryData.itemWeight || 1,
         itemValue: deliveryData.itemValue || 0,
-        customerName: deliveryData.customerName || '',
-        customerPhone: deliveryData.customerPhone || '',
-        recipientName: deliveryData.recipientName || '',
-        recipientPhone: deliveryData.recipientPhone || '',
+        customerName: deliveryData.customerName,
+        customerPhone: deliveryData.customerPhone,
+        recipientName: deliveryData.recipientName,
+        recipientPhone: deliveryData.recipientPhone,
         estimatedDistance: deliveryData.estimatedDistance || 5000,
         estimatedDuration: deliveryData.estimatedDuration || 600,
         deliveryInstructions: deliveryData.deliveryInstructions || '',
@@ -56,7 +57,7 @@ export const deliveryService = {
       console.error('Create delivery error:', error);
       return {
         success: false,
-        message: error.response?.data?.message || 'Failed to create delivery',
+        message: error.response?.data?.message || error.message || 'Failed to create delivery',
         data: null
       };
     }
@@ -93,11 +94,11 @@ export const deliveryService = {
   },
 
   // Update delivery status (Delivery Person)
-  updateDeliveryStatus: async (deliveryId, status, updates = {}) => {
+  updateDeliveryStatus: async (deliveryId, status, location = null) => {
     try {
       const response = await api.patch(`/deliveries/${deliveryId}/status`, {
         status,
-        ...updates
+        location
       });
       return response.data;
     } catch (error) {
@@ -113,7 +114,9 @@ export const deliveryService = {
   // Assign delivery to delivery person
   assignDelivery: async (deliveryId, deliveryPersonId) => {
     try {
-      const response = await api.patch(`/deliveries/${deliveryId}/assign`, { deliveryPersonId });
+      const response = await api.patch(`/deliveries/${deliveryId}/assign`, { 
+        deliveryPersonId 
+      });
       return response.data;
     } catch (error) {
       console.error('Assign delivery error:', error);
@@ -125,16 +128,18 @@ export const deliveryService = {
     }
   },
 
-  // Get all deliveries (Admin/Company)
-  getAllDeliveries: async (filters = {}) => {
+  // Get company deliveries (for company admins)
+  getCompanyDeliveries: async (companyId, filters = {}) => {
     try {
-      const response = await api.get('/deliveries', { params: filters });
+      const response = await api.get(`/deliveries/company/${companyId}`, { 
+        params: filters 
+      });
       return response.data;
     } catch (error) {
-      console.error('Get all deliveries error:', error);
+      console.error('Get company deliveries error:', error);
       return {
         success: false,
-        message: error.response?.data?.message || 'Failed to fetch deliveries',
+        message: error.response?.data?.message || 'Failed to fetch company deliveries',
         data: []
       };
     }
@@ -172,6 +177,21 @@ export const deliveryService = {
         success: false,
         message: error.response?.data?.message || 'Failed to rate delivery',
         data: null
+      };
+    }
+  },
+
+  // Get delivery statistics
+  getDeliveryStatistics: async () => {
+    try {
+      const response = await api.get('/deliveries/statistics');
+      return response.data;
+    } catch (error) {
+      console.error('Get delivery statistics error:', error);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to fetch statistics',
+        data: {}
       };
     }
   }
